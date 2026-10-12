@@ -17,3 +17,4 @@ SELECT * FROM GenExmTxExamSubj_Group;--GROUP MASTER
 -----------------------------------------------------------------------------------------------------------
 select * from GenExmTxExamDate order by exam_date desc;
 
+select * from GenExmTxGalley where debar_type not in ('0');

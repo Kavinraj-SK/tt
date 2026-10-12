@@ -2,11 +2,15 @@
   "proc_yy": 2025,
   "proc_sem": 1,
   "course_ids": [
-    "1020233110"
+    "1020235333"
   ],
   "start_date": "2026-10-13",
-  "end_date": "2026-10-19",
-  "min_gap_days": 1,
+  "end_date": "2026-10-23",
+  "default_gap_days": 3,
+  "subject_gap_days": {
+    "CS302": 3,
+    "CS301": 3
+  },
   "rows": [
     {
       "subj_code": "CS301",
@@ -16,7 +20,7 @@
     },
     {
       "subj_code": "CS302",
-      "exam_date": "2026-10-14",
+      "exam_date": "2026-10-16",
       "exam_session": "F",
       "session_order": 1
     }

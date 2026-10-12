@@ -33,8 +33,8 @@ COURSES_FILE = os.path.join(HERE, "sample_courses.json")     # used only when DB
 OUT_FILE = os.path.join(HERE, "timetable.json")
 
 PROC_YY, PROC_SEM = 2025, 1
-SESSIONS = ["F", "A"]        # sessions per day, in order (FN, AN)
-SKIP_WEEKDAYS = {6}          # 0=Mon ... 6=Sun. Sundays get no exams. Use set() to allow all days.
+SESSIONS = ["F", "A"]
+SKIP_WEEKDAYS = {6}  
 
 # Set USE_DB in the .env file: true = real database (default), false = local sample files.
 USE_DB = os.getenv("USE_DB", "true").strip().lower() in ("1", "true", "yes", "y")
@@ -69,6 +69,37 @@ def ask_int(prompt, minimum=0):
         print(f"  Please enter a whole number >= {minimum}.")
 
 
+def ask_yes_no(prompt):
+    while True:
+        a = input(prompt).strip().lower()
+        if a in ("y", "yes"):
+            return True
+        if a in ("n", "no"):
+            return False
+        print("  Please type y or n.")
+
+
+def ask_subject_gaps(subjects, default_gap):
+    """Gap (days) for each subject = minimum days between a student's previous exam and THIS subject.
+    Enter keeps the default."""
+    gaps = {c: default_gap for c in subjects}
+    ans = input(f"\nSet a different gap for individual subjects? Default is {default_gap} day(s) for all. (y/n): ")
+    if ans.strip().lower() not in ("y", "yes"):
+        return gaps
+    print("For each subject enter the minimum days between a student's previous exam and this subject.")
+    print("Press Enter to keep the default.\n")
+    for c in sorted(subjects):
+        while True:
+            raw = input(f"  Gap days before {c} [{default_gap}]: ").strip()
+            if raw == "":
+                break
+            if raw.isdigit():
+                gaps[c] = int(raw)
+                break
+            print("    Please enter a whole number, or press Enter.")
+    return gaps
+
+
 def course_exists(course_id):
     if USE_DB:
         import db
@@ -83,7 +114,7 @@ def get_inputs():
         if end >= start:
             break
         print("  End date must be on or after the start date.")
-    gap = ask_int("Minimum gap between a student's exams in days\n"
+    gap = ask_int("Default gap between a student's exams in days (you can change it per subject next)\n"
                   "  (0 = same day allowed in a different session, 1 = different days,\n"
                   "   2 = at least one free day between exams): ")
     raw = input("Course id(s), separated by commas: ")
@@ -131,7 +162,7 @@ def build_slots(start, end):
 
 
 # ---------------------------- model --------------------------------------
-def solve(subj_to_group, enrollments, slots, min_gap, time_limit=30):
+def solve(subj_to_group, enrollments, slots, gaps, time_limit=30):
     def unit_of(code):
         return f"G{subj_to_group[code]}" if code in subj_to_group else code
 
@@ -141,6 +172,10 @@ def solve(subj_to_group, enrollments, slots, min_gap, time_limit=30):
         u = unit_of(r["subj_code"])
         unit_codes[u].add(r["subj_code"])
         (ra if is_ra(r) else cur)[r["roll_no"]].add(u)
+
+    # A grouped unit needs the largest gap of any subject inside it.
+    ugap = {u: max(gaps.get(c, 0) for c in codes) for u, codes in unit_codes.items()}
+    any_gap = any(g > 0 for g in ugap.values())
 
     students = set(cur) | set(ra)
     warnings = [f"{s}: same paper/group as current and RA: {sorted(cur[s] & ra[s])}"
@@ -152,12 +187,14 @@ def solve(subj_to_group, enrollments, slots, min_gap, time_limit=30):
     slot = {u: model.NewIntVar(0, n - 1, u) for u in unit_codes}
 
     day = {}
-    if min_gap > 0:
+    if any_gap:
         for u in unit_codes:
             day[u] = model.NewIntVar(min(day_ords), max(day_ords), "d_" + u)
             model.AddElement(slot[u], day_ords, day[u])
 
-    # THE RA RULE (+ gap): every paper a student writes, RA or current, is constrained here.
+    # THE RA RULE (+ per-subject gap): every paper a student writes, RA or current, is constrained here.
+    # For two papers a, b of one student: whichever comes first (by slot), the later one must be at
+    # least gap[later] days after it. A gap of 0 still forces different slots.
     seen_sets, seen_pairs = set(), set()
     for roll in students:
         units = sorted(cur[roll] | ra[roll])
@@ -165,7 +202,7 @@ def solve(subj_to_group, enrollments, slots, min_gap, time_limit=30):
             continue
         if len(units) > n:
             raise ValueError(f"{roll} writes {len(units)} papers but only {n} slots exist")
-        if min_gap == 0:
+        if not any_gap:
             key = frozenset(units)
             if key not in seen_sets:
                 seen_sets.add(key)
@@ -176,8 +213,10 @@ def solve(subj_to_group, enrollments, slots, min_gap, time_limit=30):
                     continue
                 seen_pairs.add((a, b))
                 a_first = model.NewBoolVar(f"{a}_{b}")
-                model.Add(day[b] - day[a] >= min_gap).OnlyEnforceIf(a_first)
-                model.Add(day[a] - day[b] >= min_gap).OnlyEnforceIf(a_first.Not())
+                model.Add(slot[a] < slot[b]).OnlyEnforceIf(a_first)
+                model.Add(day[b] - day[a] >= ugap[b]).OnlyEnforceIf(a_first)
+                model.Add(slot[b] < slot[a]).OnlyEnforceIf(a_first.Not())
+                model.Add(day[a] - day[b] >= ugap[a]).OnlyEnforceIf(a_first.Not())
 
     last = model.NewIntVar(0, n - 1, "last")
     model.AddMaxEquality(last, list(slot.values()))
@@ -189,7 +228,7 @@ def solve(subj_to_group, enrollments, slots, min_gap, time_limit=30):
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return None, warnings, ("INFEASIBLE: not enough slots for these rules. "
-                                "Extend the end date or reduce the minimum gap.")
+                                "Extend the end date or reduce the gap days.")
 
     rows = []
     for u, v in slot.items():
@@ -201,21 +240,22 @@ def solve(subj_to_group, enrollments, slots, min_gap, time_limit=30):
     return rows, warnings, solver.StatusName(status)
 
 
-def verify(rows, enrollments, min_gap):
-    where = {r["subj_code"]: (r["exam_date"], r["exam_session"]) for r in rows}
+def verify(rows, enrollments, gaps):
+    where = {r["subj_code"]: (r["exam_date"], r["exam_session"], r["session_order"]) for r in rows}
     papers = defaultdict(set)
     for e in enrollments:
         papers[e["roll_no"]].add(e["subj_code"])
     problems = []
     for roll, codes in papers.items():
         for a, b in combinations(sorted(codes), 2):
-            if where[a] == where[b]:
+            if where[a][:2] == where[b][:2]:
                 problems.append((roll, a, b, "same slot"))
-            elif min_gap > 0:
-                diff = abs(date.fromisoformat(where[a][0]).toordinal()
-                           - date.fromisoformat(where[b][0]).toordinal())
-                if diff < min_gap:
-                    problems.append((roll, a, b, f"only {diff} day(s) apart"))
+                continue
+            first, later = sorted((a, b), key=lambda c: (where[c][0], where[c][2]))
+            diff = (date.fromisoformat(where[later][0]).toordinal()
+                    - date.fromisoformat(where[first][0]).toordinal())
+            if diff < gaps.get(later, 0):
+                problems.append((roll, first, later, f"{later} needs {gaps.get(later, 0)} day(s) gap, got {diff}"))
     return problems
 
 
@@ -237,28 +277,30 @@ def main():
               "GenExmTxExamSubj_Group have no usable rows). Every subject will be scheduled independently.")
     students = {e["roll_no"] for e in enrollments}
     subjects = {e["subj_code"] for e in enrollments}
-    print(f"Enrollments: {len(enrollments)} rows, {len(students)} students, {len(subjects)} subjects "
-          f"for course(s) {', '.join(course_ids)}.")
+    filtered = (not USE_DB) or bool(__import__("db").COURSE_WHERE_SQL)
+    scope = f"for course(s) {', '.join(course_ids)}" if filtered else "(ALL students; course id NOT applied)"
+    print(f"Enrollments: {len(enrollments)} rows, {len(students)} students, {len(subjects)} subjects {scope}.")
 
-    rows, warnings, status = solve(groups, enrollments, slots, gap)
+    gaps = ask_subject_gaps(subjects, gap)
+    rows, warnings, status = solve(groups, enrollments, slots, gaps)
     for w in warnings:
         print("WARNING:", w)
     if rows is None:
         sys.exit(status)
 
-    problems = verify(rows, enrollments, gap)
+    problems = verify(rows, enrollments, gaps)
     if problems:
         sys.exit(f"Verification failed: {problems}")
 
     json.dump({"proc_yy": PROC_YY, "proc_sem": PROC_SEM, "course_ids": course_ids,
                "start_date": start.isoformat(), "end_date": end.isoformat(),
-               "min_gap_days": gap, "rows": rows}, open(OUT_FILE, "w"), indent=2)
+               "default_gap_days": gap, "subject_gap_days": gaps, "rows": rows}, open(OUT_FILE, "w"), indent=2)
     print(f"\n{status}: {len(rows)} subjects scheduled, 0 clashes -> {OUT_FILE}")
     for r in sorted(rows, key=lambda r: (r["exam_date"], r["session_order"])):
         print(r["exam_date"], r["exam_session"], r["subj_code"])
 
     if USE_DB:
-        if input("\nWrite this timetable into GenExmTxExamDate? (y/n): ").strip().lower() in ("y", "yes"):
+        if ask_yes_no("\nWrite this timetable into GenExmTxExamDate? (y/n): "):
             import db
             db.write_timetable(rows, PROC_YY, PROC_SEM)
             print("Saved to GenExmTxExamDate.")

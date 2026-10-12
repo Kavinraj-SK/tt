@@ -102,7 +102,7 @@ def fetch_enrollments(proc_yy, proc_sem, course_ids):
     if COURSE_WHERE_SQL:
         runs = list(course_ids)
     else:
-        print("NOTE: course filter not configured; using ALL confirmed students for this year/semester.")
+        print("WARNING: course filter is NOT configured, so the course id(s) you typed are IGNORED.\n         Using ALL confirmed students for this year/semester (set COURSE_WHERE_SQL in db.py to filter).")
         runs = [None]
     seen, out = set(), []
     with connect() as conn:
