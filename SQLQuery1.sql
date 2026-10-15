@@ -7,14 +7,41 @@ EXEC [DOTE].[GenPrIUExamTimetable_final]
     @EndDate   = '2026-11-06',
     @Interval  = 0,
     @CourNature=null;
+-------------------------------------------------
+SELECT * FROM [test].GenExmTxGalley;
+SELECT * FROM [test].GenTMSubject;
 
-SELECT * FROM GenExmTxGalley;
-SELECT * FROM GenTMSubject;
+SELECT * FROM [test].GenExmTxExamDate;--INSERT
+SELECT * FROM  [test].GenExmTxExamSubjGrp_Mapping;--TRANSACTION GROUP MAPPING 
+SELECT * FROM [test].GenExmTxExamSubj_Group;--GROUP MASTER
+select * from test.Gentmcourse;
 
-SELECT * FROM GenExmTxExamDate;--INSERT
-SELECT * FROM  GenExmTxExamSubjGrp_Mapping;--TRANSACTION GROUP MAPPING 
-SELECT * FROM GenExmTxExamSubj_Group;--GROUP MASTER
 -----------------------------------------------------------------------------------------------------------
 select * from GenExmTxExamDate order by exam_date desc;
+-----------------------------------------------------------------
+select * from GenTmCourse;
 
-select * from GenExmTxGalley where debar_type not in ('0');
+SELECT TABLE_SCHEMA, TABLE_NAME
+FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_NAME IN ('GenExmTxGalley','GenTMSubject','GenExmTxExamDate',
+                     'GenExmTxExamSubjGrp_Mapping','GenExmTxExamSubj_Group',
+                     'GenTmCourse','SISTMSTUD','GenTmHolidayDet')
+ORDER BY TABLE_NAME;
+--------------------------
+SELECT * INTO test.GenExmTxExamSubj_Group FROM dbo.GenExmTxExamSubj_Group;
+
+
+---------
+
+INSERT INTO test.GenExmTxExamSubjGrp_Mapping SELECT * FROM dbo.GenExmTxExamSubjGrp_Mapping;
+
+
+
+
+
+
+
+
+
+
+
